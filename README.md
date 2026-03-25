@@ -134,7 +134,118 @@ Résultats : toujours **flou**, malgré l'optimisation. Problème fondamental no
 
 ---
 
-## Bilan & problème fondamental
+### 4. Approches temporelles améliorées — Alignement par homographie et optical flow
+
+#### 4a. Homographie RANSAC + Médiane glissante (Approche A)
+**Fichier :** `06_homography_median/process.py`
+
+Remplacement de l'ECC par SIFT + FLANN matcher + homographie RANSAC (8 degrés de liberté). L'homographie modélise mieux le mouvement de caméra qui avance (parallaxe partielle). Fenêtre glissante N=5 frames.
+
+Résultats : nettement meilleur que ECC euclidien pour l'alignement, mais la netteté reste dégradée (−74 % de sharpness). Le fond est trop warped par les erreurs résiduelles de perspective.
+
+---
+
+#### 4b. Optical Flow Farnebäck dense + Médiane glissante (Approche B)
+**Fichier :** `07_optflow_median/process.py`
+
+Warp dense pixel-par-pixel via `cv2.calcOpticalFlowFarneback` entre chaque voisin et la frame centrale, puis `cv2.remap`. Fenêtre N=5.
+
+Résultats : qualité comparable à l'homographie. Le flow dense pixel-par-pixel ne suffit pas à compenser la parallaxe 3D — les zones profondes et les zones proches se déplacent différemment.
+
+---
+
+#### 4c. RAFT Optical Flow GPU + Médiane glissante (Approche C)
+**Fichier :** `08_raft_median/process.py`
+
+Utilisation du réseau RAFT (Recurrent All-pairs Field Transforms, `torchvision.models.optical_flow`) sur les A100. Flow plus précis que Farnebäck, warp GPU via `torch.nn.functional.grid_sample`. Fenêtre N=5.
+
+Résultats : meilleur flow mais même problème de fond : la médiane floute toujours sur les zones à forte parallaxe.
+
+---
+
+#### 4d. Filtre passe-bas temporel après homographie (Approche D)
+**Fichier :** `09_temporal_lowpass/process.py`
+
+Au lieu de la médiane, application d'un filtre gaussien temporel (σ=2 frames) sur la série temporelle de chaque pixel après alignement par homographie. Les caustiques scintillantes (haute fréquence temporelle) sont lissées.
+
+Résultats : suppression correcte des caustiques mais netteté très dégradée (−90 %). Le filtre temporel lisse autant le fond que les caustiques.
+
+---
+
+### 5. Masque caustiques + Remplacement temporel sélectif
+
+#### 5a. Masque top-hat + médiane temporelle sélective (Approche E)
+**Fichier :** `10_mask_temporal_inpaint/process.py`
+
+Détection des caustiques via top-hat morphologique sur canal V (HSV) + seuillage adaptatif. Seuls les pixels masqués sont remplacés par la médiane temporelle des frames voisines alignées (N=7, homographie RANSAC). Les pixels hors-masque sont conservés intacts.
+
+Résultats : la netteté du fond est quasiment préservée, mais les caustiques non détectées par le masque persistent. La qualité du masque est le point limitant.
+
+---
+
+#### 5b. RAFT + Masque élargi + N=15 (Approche G)
+**Fichier :** `10_mask_temporal_inpaint/process_G_final.py`
+
+Version raffinée : flow RAFT pour un warp plus précis, masque top-hat multi-seuils plus inclusif, fenêtre élargie à N=15 frames (0,5 s) pour plus de variation temporelle des caustiques, remplacement progressif via masque doux.
+
+Résultats : meilleure suppression que E mais encore −64 à −76 % de sharpness sur les zones reconstituées.
+
+---
+
+### 6. Décomposition fréquentielle + médiane temporelle
+
+#### 6a. Décomposition base/détail (Approche H)
+**Fichier :** `10_mask_temporal_inpaint/process_H_decompose.py`
+
+Séparation de chaque frame en `base = GaussianBlur(σ=25)` (illumination + caustiques) et `détail = frame − base` (texture pure). La médiane temporelle n'est appliquée que sur la couche base après alignement. Les erreurs d'alignement sont invisibles sur la couche lisse. La couche détail est conservée intacte.
+
+Résultats : **−17 à −19 % de sharpness** — nette amélioration par rapport aux approches précédentes. Les caustiques larges disparaissent bien, mais les caustiques fines (fond sableux) qui ont des composantes haute fréquence persistent dans la couche détail.
+
+---
+
+#### 6b. Pyramide Laplacienne multi-niveaux (Approche I) ⭐
+**Fichier :** `10_mask_temporal_inpaint/process_I_pyramid.py`
+
+Décomposition en pyramide de Laplace à L=4 niveaux. Seul le niveau 0 (texture haute fréquence pure) est conservé intact. Tous les autres niveaux (bandes médio-fréquences + fond) reçoivent la médiane temporelle. Capture les caustiques à **toutes les échelles spatiales** (larges et fines).
+
+Résultats : **−15 à −18 % de sharpness** — meilleure approche mesurée à date. Suppression visuelle nettement meilleure qu'en H, surtout sur fond sableux (frame 130).
+
+---
+
+#### 6c. Sweep paramétrique sur la pyramide (configurations I)
+**Fichier :** `10_mask_temporal_inpaint/sweep_pyramid_params.py`
+
+Exploration systématique des combinaisons `(keep_fine, levels, N)` sur 3 frames témoins, avec génération d'une grille visuelle et mesure de sharpness pour chaque config.
+
+Configurations testées :
+- `I_base` : keep_fine=1, L=4, N=9
+- `I_keep0` : keep_fine=0, L=4, N=9 (tous les niveaux médianés)
+- `I_L5` : keep_fine=1, L=5, N=9
+- `I_L5_k0` : keep_fine=0, L=5, N=9
+- `I_N13` : keep_fine=1, L=4, N=13
+
+---
+
+#### 6d. Pyramide Laplacienne + traitement sélectif du niveau fin (Approche J)
+**Fichier :** `10_mask_temporal_inpaint/process_J_selective.py`
+
+Extension de l'approche I : le niveau 0 (le plus fin) n'est pas conservé tel quel mais traité sélectivement. Un masque top-hat multi-échelle identifie les arêtes brillantes des caustiques fines dans ce niveau. Seuls les pixels du masque sont remplacés par la médiane ; la texture équilibrée (corail, sable) reste intacte.
+
+Résultats : suppression des caustiques fines résiduelles de I, netteté comparable à I (−1 à −5 %).
+
+---
+
+### 7. Comparaison globale
+**Fichier :** `10_mask_temporal_inpaint/compare_all.py`
+
+Grille de comparaison multi-approches (Original, A, D, G, H, I) sur 3 frames témoins.
+Sortie : `comparaison_all_approaches.jpg` + `sharpness_report.txt`.
+
+---
+
+## Bilan quantitatif des approches
+
+### Réduction caustiques vs. netteté
 
 | Approche | Réduction caustiques | Netteté fond | Practicabilité |
 |---|---|---|---|
@@ -145,16 +256,28 @@ Résultats : toujours **flou**, malgré l'optimisation. Problème fondamental no
 | Médiane globale ECC | Bonne | **Très floue** | Lent |
 | Fenêtre N=5 ECC | Moyenne | **Floue** | Moyen |
 | Fenêtre N=9 ECC | Meilleure | **Toujours floue** | Lent |
+| A — Homographie | Bonne | **Floue (−75 %)** | Moyen |
+| B — Farnebäck | Comparable à A | **Floue** | Moyen |
+| C — RAFT flow | Bonne | **Floue** | GPU |
+| D — Lowpass temporel | Bonne | **Très floue (−91 %)** | Moyen |
+| E — Masque + médiane | Partielle | Bonne (hors masque) | Moyen |
+| G — RAFT + masque | Bonne | **Floue (−64 à −76 %)** | GPU |
+| H — Base/Détail | Bonne (larges) | **−17 à −19 %** | CPU |
+| **I — Pyramide Laplace** | **Bonne (toutes échelles)** | **−15 à −18 %** | **CPU** |
+| J — Pyramide sélective | **Bonne + fines** | **≈ I** | CPU |
 
-**Cause racine identifiée :** la caméra avance (mouvement de translation 3D, pas juste 2D). L'ECC 2D Euclidien (ou même Homographique) ne peut pas compenser un mouvement de caméra qui génère un **changement de parallaxe** sur une scène 3D. Résultat : le fond reste légèrement différent d'une frame à l'autre → la médiane floute.
+### Sharpness absolue (variance Laplacien, après encodage mp4v)
 
----
+| Approche | Frame 15 | Frame 75 | Frame 130 |
+|:---|:---:|:---:|:---:|
+| Original | 8703 | 6007 | 22092 |
+| A Homographie | −74,6 % | −71,5 % | −81,3 % |
+| D Lowpass | −90,8 % | −90,5 % | −89,6 % |
+| G RAFT + Masque | −63,9 % | −68,3 % | −76,4 % |
+| H Base/Détail | −17,0 % | −19,4 % | −12,7 % |
+| **I Pyramide** | **−15,1 %** | **−18,0 %** | **−12,2 %** |
 
-## Pistes non encore explorées
+*Note : les mesures post-codec incluent ~13 % de flou dû à la compression mp4v.
+En direct (avant encodage), H = −0,1 … −0,2 %, I = −1,2 … −4,3 %.*
 
-- **Optical Flow dense** (Farnebäck, RAFT) pour warp plus précis que ECC
-- **Homographie** (`MOTION_HOMOGRAPHY`) à la place d'ECC Euclidien
-- **Détection & masquage direct** des caustiques par apprentissage profond (segmentation sémantique)
-- **Fréquences spatiales** : séparer hautes fréquences (caustiques) / basses fréquences (fond) puis traiter uniquement les HF temporellement
-- **Stabilisation robuste** avec RANSAC sur points d'intérêt (SIFT/ORB) avant la médiane
-- **Approche fréquentielle** : les caustiques ont une fréquence temporelle élevée → filtre passe-bas temporel par pixel après alignement
+**Cause racine des méthodes floues :** la caméra avance (translation 3D). L'alignement 2D (ECC, homographie, optical flow) ne peut pas compenser la parallaxe 3D → le fond reste légèrement différent d'une frame à l'autre → la médiane globale floute. La solution est de n'appliquer la médiane que sur les bandes fréquentielles qui contiennent réellement les caustiques (approches H, I, J).

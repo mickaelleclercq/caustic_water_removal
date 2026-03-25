@@ -73,7 +73,11 @@ class DecoderBlock(nn.Module):
         self.up   = nn.ConvTranspose2d(in_c, out_c, 2, stride=2)
         self.conv = ConvBlock(out_c * 2, out_c)
     def forward(self, x, skip):
-        return self.conv(torch.cat([self.up(x), skip], dim=1))
+        x = self.up(x)
+        # Ajustement en cas de taille impaire (ex. 1080 non divisible par 16)
+        if x.shape[2:] != skip.shape[2:]:
+            x = torch.nn.functional.interpolate(x, size=skip.shape[2:], mode='bilinear', align_corners=False)
+        return self.conv(torch.cat([x, skip], dim=1))
 
 class UNet(nn.Module):
     def __init__(self, in_ch=3, out_ch=1):
