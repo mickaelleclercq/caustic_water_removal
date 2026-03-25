@@ -1,0 +1,50 @@
+# Environnement virtuel Python
+myenv/
+
+# Fichiers vidéo (outputs générés - lourds)
+*.mp4
+*.MP4
+*.avi
+*.AVI
+*.mov
+*.MOV
+*.mkv
+*.MKV
+*.webm
+
+# Modèles externes (se réinstallent via git clone / setup)
+11_deep_learning_models/FUnIE-GAN/
+11_deep_learning_models/Reti-Diff/
+11_deep_learning_models/recgs/
+11_deep_learning_models/seafloor_invariant/
+
+# Outputs et données de test (lourds)
+11_deep_learning_models/seafloor_invariant_run/
+11_deep_learning_models/test_frames/
+11_deep_learning_models/funie_output/
+
+# Fichiers binaires modèles/données
+*.npy
+*.pth
+*.pkl
+*.h5
+*.onnx
+*.pt
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# Jupyter
+.ipynb_checkpoints/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
