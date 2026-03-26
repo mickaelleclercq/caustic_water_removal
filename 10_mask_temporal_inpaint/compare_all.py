@@ -29,6 +29,7 @@ VIDEOS = {
     'G_RAFT':      os.path.join(BASE, 'result_G_final_N15.mp4'),
     'H_BaseDetail':os.path.join(BASE, 'result_H_decompose.mp4'),
     'I_Pyramid':   os.path.join(BASE, 'result_I_pyramid_N9.mp4'),
+    'J_Selective': os.path.join(BASE, 'result_J_selective_N9.mp4'),
 }
 
 # NB : les approches B et C sont dans 07/08 — pas de MP4 sauvegardé car résultats

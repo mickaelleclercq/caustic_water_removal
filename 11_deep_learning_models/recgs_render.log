@@ -1,0 +1,4 @@
+Looking for config file in recgs_output/cfg_args
+Config file found: recgs_output/cfg_args
+Rendering recgs_output
+Rendering progress:   0%|          | 0/3 [00:00<?, ?it/s]Rendering progress:  33%|███▎      | 1/3 [00:00<00:01,  1.35it/s]Rendering progress:  67%|██████▋   | 2/3 [00:01<00:00,  1.40it/s]Rendering progress: 100%|██████████| 3/3 [00:02<00:00,  1.47it/s]Rendering progress: 100%|██████████| 3/3 [00:02<00:00,  1.44it/s]

@@ -281,3 +281,99 @@ Sortie : `comparaison_all_approaches.jpg` + `sharpness_report.txt`.
 En direct (avant encodage), H = −0,1 … −0,2 %, I = −1,2 … −4,3 %.*
 
 **Cause racine des méthodes floues :** la caméra avance (translation 3D). L'alignement 2D (ECC, homographie, optical flow) ne peut pas compenser la parallaxe 3D → le fond reste légèrement différent d'une frame à l'autre → la médiane globale floute. La solution est de n'appliquer la médiane que sur les bandes fréquentielles qui contiennent réellement les caustiques (approches H, I, J).
+
+---
+
+### 8. Approches Deep Learning — Gaussian Splatting
+
+#### 8a. FUnIE-GAN
+**Dossier :** `11_deep_learning_models/`
+
+Réseau génératif entraîné sur des paires d'images sous-marines dégradées/restaurées. Testé en inférence directe sur les frames.
+
+Résultats : **inefficace** — le réseau améliore la colorimétrie générale mais n'a aucun effet sur les caustiques (non représentées dans son jeu d'entraînement).
+
+---
+
+#### 8b. Seafloor UNet (segmentation)
+**Dossier :** `11_deep_learning_models/`
+
+UNet entraîné pour segmenter le fond marin et en déduire les zones affectées par les caustiques.
+
+Résultats : **trop agressif** — 87–97 % des pixels masqués, sur-segmentation massive.
+
+---
+
+#### 8c. RecGS — Recurrent Gaussian Splatting ⭐
+**Dossier :** `11_deep_learning_models/recgs_output/`
+
+Approche 3D : reconstruction de la scène statique via **3D Gaussian Splatting**, puis entraînement d'un module récurrent (RecGS) pour séparer l'illumination stable (fond) des variations temporelles (caustiques).
+
+**Pipeline :**
+1. Reconstruction COLMAP sur 75 frames à 1280×720 (74/75 caméras enregistrées, 20 156 points 3D, modèle PINHOLE)
+2. Entraînement 3DGS vanilla — `sh_degree=3`, 30 000 itérations → loss = **0.107**
+3. Entraînement RecGS — 30 000 itérations supplémentaires (checkpoint 30k→60k) → loss = **0.155**
+4. Rendu des 75 frames : `gt/`, `renders/`, `compen/`, `fdiff/`
+
+**Métriques finales (640×360, 75 frames) :**
+
+| Métrique | Valeur |
+|---|---|
+| Luminosité GT | 114.7 ± 6.5 |
+| Luminosité compen | 106.6 ± 11.5 |
+| Réduction de luminosité | −8.0 ± 5.9 |
+| MAE(gt, compen) | **21.7 px** (min 12.9, max 29.4) |
+| Variance FDiff (énergie caustiques) | 19.9 |
+
+**Sorties :**
+- `recgs_output/result_recgs_compen_60k.mp4` — scène sans caustiques (4.3 MB)
+- `recgs_output/result_recgs_comparison_60k.mp4` — GT | Compen côte à côte (8.6 MB)
+- `recgs_output/result_recgs_4way_60k.mp4` — GT | Renders | Compen | FDiff (17.2 MB)
+- `recgs_output/grid_recgs_60k.jpg` — grille visuelle 3 frames × 4 colonnes
+
+**Résultats : mitigés.** Sur certaines vues (frame centrale ~37), la suppression est convaincante. Sur d'autres (frames 10 et 65), la reconstruction 3DGS génère des artéfacts de couleur (dominante rose/rouge, zones sombres) qui contaminent la sortie `compen`. La variance de luminosité augmente dans `compen` (±11.5 vs ±6.5 GT), signe d'instabilité temporelle. La résolution de sortie est également limitée à 640×360 (×6 en dessous du 4K d'origine).
+
+**Conclusion RecGS :** L'approche est théoriquement solide (séparation illumination stable / caustiques via représentation 3D explicite) mais en pratique insuffisamment convaincante sur cette scène. La qualité dépend fortement de la couverture de vue COLMAP et de la convergence 3DGS — deux points difficiles à garantir sur une vidéo en mouvement continu. Durée totale : ~2h (30 min COLMAP + 49 min 3DGS + 1h07 RecGS) sur A100.
+
+---
+
+#### 8d. CausticsNet / BackscatterNet (ECCV 2024)
+**Sources :** article + dépôt public `josauder/backscatternet_causticsnet`
+
+Approche deep learning spécifiquement conçue pour l'imagerie sous-marine :
+- **CausticsNet** vise la suppression des caustiques
+- **BackscatterNet** vise la suppression du voile diffusant (backscatter)
+
+Le point fort théorique de cette méthode est qu'elle est **auto-supervisée à partir de vidéos sous-marines**, avec une perte formulée via **monocular SLAM** et erreur de reprojection. C'est, sur le papier, l'approche deep learning la plus proche de notre problématique réelle (vidéo, mouvement caméra, absence de ground truth).
+
+**Pourquoi elle n'a pas pu être utilisée ici :**
+1. Le dépôt public n'expose pas de procédure d'inférence prête à l'emploi sur une vidéo ou un dossier d'images
+2. Aucun checkpoint d'inférence public n'est fourni
+3. Le README du dépôt indique encore : *"the full source code, model checkpoints & demo will be available"*
+4. Le code disponible est surtout orienté **entraînement**
+5. Le script `train_causticsnet.py` dépend d'un checkpoint externe de modèle SfM (`JointExperimentFixedIntrinsicsCenterLargeDatasetkeepalpha_best.pth`) non fourni
+
+**Conclusion CausticsNet :** très bonne piste de recherche, probablement la plus pertinente parmi les approches deep learning trouvées, mais **non exploitable en pratique dans ce projet sans réentraînement ni artefacts supplémentaires publiés par les auteurs**. Dans notre contrainte actuelle (`pas de réentraînement`), la méthode doit donc être écartée.
+
+---
+
+## Conclusion générale
+
+| Approche | Qualité suppression caustiques | Netteté | Temps calcul | Verdict |
+|---|---|---|---|---|
+| Top-Hat Inpainting | ★★☆ Partielle | ★★★ Bonne | Rapide | Acceptable |
+| Médiane temporelle (meilleure config I) | ★★★ Bonne | ★★☆ −15 à −18 % | CPU moyen | **Meilleur compromis** |
+| Pyramide sélective J | ★★★ Bonne + fines | ★★★ ≈ I | CPU moyen | **Meilleure mesurée** |
+| FUnIE-GAN | ★☆☆ Nulle | ★★★ | Rapide (GPU) | ❌ Hors-sujet |
+| RecGS (3DGS + récurrent) | ★★☆ Partielle | ★★☆ Artéfacts | ~2h (A100) | ❌ Pas satisfaisant |
+| CausticsNet (ECCV 2024) | Théoriquement très pertinente | Non testée | N/A | ❌ Inutilisable sans poids/checkpoints |
+
+**Meilleure approche opérationnelle :** Pyramide Laplacienne J (`process_J_selective.py`) — aucune dépendance deep learning, traitement CPU, −1 à −5 % de netteté réelle, suppression correcte à toutes les échelles spatiales.
+
+---
+
+## ⚠️ État final — Résultat insuffisant
+
+**Le résultat 4K final (`result_J_3840x2160_N9.mp4`) reste visuellement flou et insatisfaisant.**
+
+Malgré l'approche J en pleine résolution 4K (−15 à −18 % de sharpness mesuré), la vidéo ne rend pas visuellement comme attendu : le rendu final apparaît flou. Aucune des approches testées n'a permis de supprimer les caustiques tout en conservant une netteté visuelle acceptable. Le problème fondamental reste non résolu.

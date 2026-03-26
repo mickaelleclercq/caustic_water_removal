@@ -164,11 +164,16 @@ def process_frame_J(frames, center_idx, half, levels=L, fine_sigma=FINE_SIGMA):
             # Excès positif pixel-par-pixel
             excess = np.maximum(fine_orig - fine_med, 0)  # (H,W,3)
 
-            # Seuil adaptatif sur l'excès (robuste aux outliers)
-            # On prend le 95e percentile de l'excès comme repère
+            # Seuil au 98e percentile de l'excès positif
+            # → ne cible QUE les pics appartenant aux caustiques (~top 2% de pex = ~0.9% de tous)
+            # → texture alignée : excess ≈ 0 → non touché
+            # → caustiques : excess >> 0, bien au-delà du seuil
             exc_flat = excess.ravel()
-            p95 = float(np.percentile(exc_flat[exc_flat > 0], 95)) if (exc_flat > 0).any() else 1.0
-            thresh = max(p95 * 0.3, 2.0)   # seuil = 30% du 95e percentile, min 2
+            pos_only = exc_flat[exc_flat > 0]
+            if len(pos_only) > 100:
+                thresh = float(np.percentile(pos_only, 98))
+            else:
+                thresh = 50.0  # fallback si peu de pixels positifs
 
             progress = np.clip((excess - thresh) / (thresh + 1e-6), 0, 1)
             fine_result = fine_orig - progress * excess
