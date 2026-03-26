@@ -372,6 +372,44 @@ Le point fort théorique de cette méthode est qu'elle est **auto-supervisée à
 
 ---
 
+## 🏆 Meilleures approches visuelles
+
+Les 4 approches dont le résultat vidéo est jugé le meilleur visuellement, toutes traitées à 0.25× (960×540) sur **CPU pur** (aucun GPU requis) :
+
+| Vidéo | Approche | Technique clé | Temps (5 s / 150 frames) |
+|---|---|---|---|
+| `result_homography_N5.mp4` | A | SIFT + FLANN + Homographie RANSAC 8-DoF + médiane N=5 | ~1 min 45 s |
+| `result_lowpass.mp4` | D | Homographie RANSAC + filtre gaussien temporel σ=2, N=9 | ~3 min 00 s |
+| `result_mask_inpaint_N7.mp4` | E | Top-Hat canal V + remplacement sélectif par médiane N=7 | ~2 min 42 s |
+| `result_J_selective_N9.mp4` | J | Pyramide Laplacienne L=4 + suppression excès positif au p98 N=9 | **~4 min 00 s** |
+
+### CPU ou GPU ?
+
+**Toutes 100 % CPU.** Le goulot d'étranglement est le calcul SIFT + homographie RANSAC sur chaque frame voisine (~8 paires par frame pour N=9). Aucune opération GPU n'est utilisée dans ces pipelines (contrairement aux approches C/G qui utilisent RAFT sur A100).
+
+### Parallélisation possible ?
+
+**Oui, très facilement.** Chaque frame de sortie ne dépend que de ses N voisines (fenêtre glissante indépendante). Deux stratégies :
+
+**1. Parallélisation par frame (`multiprocessing.Pool`)** — le plus simple :
+```python
+from multiprocessing import Pool
+with Pool(processes=8) as pool:
+    results = pool.starmap(process_frame, [(frames, i, half) for i in range(len(frames))])
+```
+Gain théorique : facteur ≈ nombre de cœurs CPU. Sur 8 cœurs : ~30 s au lieu de 4 min pour l'approche J.
+
+**2. Parallélisation par chunk + merge** — pour les très longues vidéos :
+- Découper la vidéo en K segments avec un overlap de N//2 frames de chaque côté (pour éviter les artefacts de bord)
+- Traiter chaque chunk indépendamment en parallèle
+- Reconstituer la vidéo finale en supprimant l'overlap avant concaténation avec `ffmpeg -f concat`
+
+Contrainte : chaque process doit avoir accès aux N//2 frames de contexte autour de ses bords → overlap minimal = N//2 frames (4 frames pour N=9).
+
+**Limitation actuelle :** les scripts existants sont mono-thread et chargent toute la vidéo en RAM. Pour une vidéo longue à 4K, il faudrait adapter le chargement en streaming par chunk.
+
+---
+
 ## ⚠️ État final — Résultat insuffisant
 
 **Le résultat 4K final (`result_J_3840x2160_N9.mp4`) reste visuellement flou et insatisfaisant.**
