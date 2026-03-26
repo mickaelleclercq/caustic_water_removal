@@ -406,3 +406,47 @@ Les 4 meilleures méthodes identifiées visuellement ont été réimplémentées
 | J — Pyramide Laplacienne sélective | `15_gpu_pyramid_J/` | L=4, N=9 | **0,89 s/frame** | 1029 s ≈ 17 min | 2,1 Go |
 
 **Accélération GPU vs CPU (méthode J référence) :** 0,89 s/frame GPU vs ~8,5 s/frame CPU → **×9,5 de speedup**.
+
+---
+
+## 🔬 Amélioration de la méthode E — Décomposition LF/HF (dossier 16)
+
+**Bilan visuel des approches GPU :** tous les résultats restent visuellement insatisfaisants, sauf `result_E_gpu_4k_N7.mp4` qui présente un potentiel. L'objectif du dossier `16_gpu_mask_v2/` est d'améliorer cette méthode.
+
+### Problème identifié dans E v1
+
+La méthode E v1 remplace entièrement les pixels caustiques par la médiane temporelle alignée. La médiane, même d'images bien alignées, est légèrement floue (interpolation d'homographie, sous-pixel). Résultat : **−66 à −70 % de netteté** dans les zones remplacées.
+
+### Solution : décomposition basse/haute fréquence
+
+L'idée clé : les caustiques sont essentiellement une **perturbation d'illumination basse fréquence** (tache de lumière). La **texture** du fond marin (sable, coraux) est une information haute fréquence. On peut donc :
+
+- **LF (σ=20px)** → prendre depuis la médiane (stable dans le temps → sans caustiques)
+- **HF (σ=20px)** → garder depuis la frame originale (texture nette, non contaminée à cette échelle)
+
+**Formule :** `résultat = ref + masque × (med_LF − ref_LF)`
+
+- En dehors du masque : frame originale pure (0 % de perte)
+- Dans le masque : on remplace uniquement l'illumination basse fréquence, la texture reste intacte
+
+### Autres améliorations (v2 vs v1)
+
+| Paramètre | v1 (14_gpu_mask_inpaint) | v2 (16_gpu_mask_v2) |
+|---|---|---|
+| Kernels top-hat | 1 × 15 px | 3 × [11, 21, 33 px] (max) |
+| Seuil détection σ | 1.5 | **0.8** (plus agressif) |
+| Dilatation masque | 1 × 7 px | **3 × 9 px** |
+| Lissage bords masque | (11,11) σ=3 | (21,21) σ=5 |
+| Fenêtre temporelle N | 7 | **9** |
+| Remplacement pixels | Médiane complète | **LF only (σ=20px)** |
+
+### Résultats comparatifs
+
+| Méthode | Sharpness frame 15 | Sharpness frame 75 | Sharpness frame 130 | Temps/frame |
+|---|---|---|---|---|
+| E v1 — médiane complète | −66 % | −70 % | −69 % | 0,87 s |
+| **E v2 — LF/HF σ=20** | **−5 % ** | **−9 %** | **−8 %** | 1,4 s |
+
+La perte de netteté chute de **−68 % à −7 % en moyenne** : la texture est quasiment intégralement préservée.
+
+**Dossier :** `16_gpu_mask_v2/` — script `process.py`, comparaison `comparaison_E_v2.jpg`, sortie `result_E_v2_gpu_4k_N9.mp4`
