@@ -450,3 +450,19 @@ L'idée clé : les caustiques sont essentiellement une **perturbation d'illumina
 La perte de netteté chute de **−68 % à −7 % en moyenne** : la texture est quasiment intégralement préservée.
 
 **Dossier :** `16_gpu_mask_v2/` — script `process.py`, comparaison `comparaison_E_v2.jpg`, sortie `result_E_v2_gpu_4k_N9.mp4`
+
+### Verdict E v2
+
+Malgré des métriques de netteté excellentes (−7 % vs −68 % en v1), le résultat visuel reste **insatisfaisant**. La décomposition LF/HF résout bien le problème de flou, mais les caustiques subsistent visuellement dans la vidéo finale : elles sont atténuées mais pas supprimées. Le masque top-hat, même multi-échelle et agressif (σ=0.8), ne capture pas suffisamment les caustiques diffuses et à contraste faible.
+
+---
+
+## Conclusion finale
+
+**Aucune des approches testées ne produit un résultat visuellement satisfaisant.** Le problème de suppression des caustiques sur cette vidéo reste ouvert. Les difficultés fondamentales sont :
+
+1. **Mouvement 3D de caméra** (avancée sous-marine) : l'alignement 2D ne peut pas compenser la parallaxe — les approches temporelles flouttent inévitablement.
+2. **Masquage imparfait** : les caustiques à faible contraste ou diffuses échappent à la détection top-hat, quels que soient les paramètres.
+3. **Compromis netteté / suppression** : les approches qui suppriment bien les caustiques (médiane globale, lowpass temporel) flouttent massivement ; celles qui préservent la netteté (masque + LF/HF) ne suppriment pas assez.
+
+La piste la plus prometteuse non exploitée reste **CausticsNet (ECCV 2024)**, qui adresse exactement ce problème de manière auto-supervisée sur vidéo, mais qui n'est pas exploitable sans les checkpoints d'inférence publiés par les auteurs.
